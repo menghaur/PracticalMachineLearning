@@ -1,0 +1,185 @@
+---
+title: "Practical Machine Learning - Prediction Assignment Writeup"
+output: html_document
+---
+
+# Building Predictive Model for Determining Fitness Exercise Correctness 
+
+### Background
+Using devices such as JawboneUp, NikeFuelBand, and Fitbitit is now possible to collect a large amount of data about personal activity relatively inexpensively. To find patterns in their behavior. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+
+In this project, the goal is build a predictive model to determine whether a particular form of exercise is performed correctly. More information is available from the website: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+### Data Retrieval
+Dataset can be downloaded as follow
+
+```{r}
+setwd("C:/Apps/DataScience/ass/machine")
+if (! file.exists('./pml-training.csv')) {
+    download.file('http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv', destfile = './pml-training.csv')
+}
+if (! file.exists('./pml-testing.csv')) {
+    download.file('http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv', destfile = './pml-testing.csv')
+}
+```
+
+Read the csv data: 
+
+```{r}
+pml.training <- read.csv('./pml-training.csv')
+pml.testing <- read.csv('./pml-testing.csv')
+```
+
+### Processing and Analysis
+It consists of 19622 observations of 160 variables, one of which is the dependent variable:
+
+```{r}
+dim(pml.training)
+```
+
+Review of the data set indicates that many of the 159 predictors are missing in most of the observations:
+
+```{r}
+sum(complete.cases(pml.training))
+head(pml.training)
+```
+
+Found that some of the variables in the data set do not come from accelerometer measurements and record experimental setup or participants' data. Should consider to remove the confounders data. Furthermore also discarded the variables: X, user_name, raw_timestamp_part1, raw_timestamp_part2, cvtd_timestamp, new_window and num_window.
+
+```{r}
+include.cols <- c('roll_belt', 'pitch_belt', 'yaw_belt', 'total_accel_belt', 'gyros_belt_x', 
+                  'gyros_belt_y', 'gyros_belt_z', 'accel_belt_x', 'accel_belt_y', 'accel_belt_z', 
+                  'magnet_belt_x', 'magnet_belt_y', 'magnet_belt_z', 'roll_arm', 'pitch_arm', 
+                  'yaw_arm', 'total_accel_arm', 'gyros_arm_x', 'gyros_arm_y', 'gyros_arm_z',
+                  'accel_arm_x', 'accel_arm_y', 'accel_arm_z', 'magnet_arm_x', 'magnet_arm_y', 
+                  'magnet_arm_z', 'roll_dumbbell', 'pitch_dumbbell', 'yaw_dumbbell', 
+                  'total_accel_dumbbell', 'gyros_dumbbell_x', 'gyros_dumbbell_y', 'gyros_dumbbell_z', 
+                  'accel_dumbbell_x', 'accel_dumbbell_y', 'accel_dumbbell_z', 'magnet_dumbbell_x', 
+                  'magnet_dumbbell_y', 'magnet_dumbbell_z', 'roll_forearm', 'pitch_forearm', 
+                  'yaw_forearm', 'total_accel_forearm', 'gyros_forearm_x', 'gyros_forearm_y', 
+                  'gyros_forearm_z', 'accel_forearm_x', 'accel_forearm_y', 'accel_forearm_z',
+                  'magnet_forearm_x', 'magnet_forearm_y', 'magnet_forearm_z')
+
+proc.pml.testing <- pml.testing[, include.cols]
+include.cols <- c(include.cols, 'classe')
+proc.pml.training <- pml.training[, include.cols]
+```
+
+Transofmration require for data set of 19622 observations of 53 variables (dependent variable "classe").
+```{r}
+dim(proc.pml.training)
+sum(complete.cases(proc.pml.training))
+```
+
+Let's explore association data
+```{r}
+pred.corr <- cor(proc.pml.training[, names(proc.pml.training) != 'classe'])
+pal <- colorRampPalette(c('blue', 'white', 'red'))(n = 199)
+heatmap(pred.corr, col = pal)
+```
+
+From heat map of, most of predictors did not shown high degree of correlation. However, there are a few pairs of variables that are highly correlated. 
+
+```{r}
+pred.corr[(pred.corr < -0.8 | pred.corr > 0.8) & pred.corr != 1]
+```
+
+19 variable pairs the Pearson correlation coefficient for which is above an arbitrary cutoff of 0.8. I tried 0.98 and found there are 2 pairs of variables that lie above this threshold.
+
+```{r}
+which(pred.corr > 0.98 & pred.corr != 1)
+pred.corr[which(pred.corr > 0.98 & pred.corr != 1)]
+which(pred.corr < -0.98)
+pred.corr[which(pred.corr < -0.98)]
+```
+
+The roll_belt predictor participates in both of these pairwise interactions:
+```{r}
+pred.corr['roll_belt', 'total_accel_belt']
+pred.corr['roll_belt', 'accel_belt_z']
+pred.corr['total_accel_belt', 'accel_belt_z']
+```
+
+I seemed prudent to discard at least the roll_belt variable to prevent excessive bias in the model.
+```{r}
+include.cols <- c('pitch_belt', 'yaw_belt', 'total_accel_belt',
+                  'gyros_belt_x', 'gyros_belt_y', 'gyros_belt_z',
+                  'accel_belt_x', 'accel_belt_y', 'accel_belt_z',
+                  'magnet_belt_x', 'magnet_belt_y', 'magnet_belt_z',
+                  'roll_arm', 'pitch_arm', 'yaw_arm', 'total_accel_arm',
+                  'gyros_arm_x', 'gyros_arm_y', 'gyros_arm_z',
+                  'accel_arm_x', 'accel_arm_y', 'accel_arm_z',
+                  'magnet_arm_x', 'magnet_arm_y', 'magnet_arm_z',
+                  'roll_dumbbell', 'pitch_dumbbell', 'yaw_dumbbell', 'total_accel_dumbbell',
+                  'gyros_dumbbell_x', 'gyros_dumbbell_y', 'gyros_dumbbell_z',
+                  'accel_dumbbell_x', 'accel_dumbbell_y', 'accel_dumbbell_z',
+                  'magnet_dumbbell_x', 'magnet_dumbbell_y', 'magnet_dumbbell_z',
+                  'roll_forearm', 'pitch_forearm', 'yaw_forearm', 'total_accel_forearm',
+                  'gyros_forearm_x', 'gyros_forearm_y', 'gyros_forearm_z',
+                  'accel_forearm_x', 'accel_forearm_y', 'accel_forearm_z',
+                  'magnet_forearm_x', 'magnet_forearm_y', 'magnet_forearm_z'
+                  )
+proc.pml.testing <- pml.testing[, include.cols]
+include.cols <- c(include.cols, 'classe')
+proc.pml.training <- pml.training[, include.cols]
+```
+
+This analysis only explores pairwise, linear associations between variables.
+
+### Predictive Model
+
+While building a predictive model, I chose the random forest algorithm. Random forests have several nice theoretical properties:
+
+1. There's no parameter selection involved. While random forest may overfit a given data set, just as any other machine learning algorithm, it has been shown by Breiman that classifier variance does not grow with the number of trees used. It's better to use more trees, memory and computational power allowing.
+
+2. The algorithm allows for good in-training estimates of variable importance and generalization error, which largely eliminates the need for a separate validation stage, though obtaining a proper generalization error estimate on a testing set would still be prudent.
+
+3. The algorithm is generally robust to outliers and correlated covariates, which seems like a nice property to have when there are known interactions between variables and no data on presence of outliers in the data set.
+
+Given that the problem is a high-dimensional classification problem with number of observations much exceeding the number of predictors, random forest seems like a sound choice.
+
+```{r}
+library(randomForest)
+library(caret)
+library(grDevices)
+```
+
+I set a fixed RNG seed to ensure reproducibility of results (the random forest classifier training being non-deterministic).
+```{r}
+set.seed(10000)
+```
+
+Let's have a classifier using all independent variables and 2048 trees.
+
+```{r}
+model <- randomForest(classe ~ ., data = proc.pml.training, ntree = 2048)
+```
+
+```{r}
+model
+```
+
+The out-of-bag error tends to exceed the generalization error, so the figure of 0.29% seems very promising.
+```{r}
+model$confusion
+```
+
+The confusion matrix also looks good, indicating that the model fit the training set well. It may also be instructive to look at the variable importance estimates obtained by the classifier training algorithm.
+```{r}
+imp <- varImp(model)
+imp$Variable <- row.names(imp)
+imp[order(imp$Overall, decreasing = T),]
+```
+
+Only five variables have importance measure more than ten times lower than the most important variable (yaw_belt), which seems to indicate the algorithm employed made good use of provided predictors.
+
+The following command can be used to obtain model's prediction for the assigned testing data set (output concealed intentially):
+```{r}
+predict(model, proc.pml.testing)
+```
+
+The model achieves the perfect 100% accuracy on the limited "testing set" provided by the course staff.
+
+### Conclusion
+
+Given the model obtained using the initial approach appears to be highly successful by all available measures, further exploration does not seem necessary.
